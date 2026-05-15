@@ -24,6 +24,8 @@
   <ItemGroup>
     <Content Include="Assets\logo.png" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
     <Content Include="Assets\jupiter.ico" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+    <Content Include="..\..\Install-JupiterContextMenu.cmd" Link="Install-JupiterContextMenu.cmd" CopyToOutputDirectory="Never" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\Uninstall-JupiterContextMenu.cmd" Link="Uninstall-JupiterContextMenu.cmd" CopyToOutputDirectory="Never" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <Target Name="RemovePackageXmlDocsFromPublish" BeforeTargets="ComputeFilesToPublish">

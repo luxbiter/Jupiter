@@ -320,6 +320,20 @@ internal sealed record LaunchOptions(
                 throw new FileNotFoundException($"Target does not exist: {fullTarget}");
             }
         }
+        else
+        {
+            var workingDirectory = Directory.GetCurrentDirectory();
+            if (File.Exists(Path.Combine(workingDirectory, "index.html")))
+            {
+                root = workingDirectory;
+                entry = "index.html";
+            }
+            else if (File.Exists(Path.Combine(workingDirectory, "index.htm")))
+            {
+                root = workingDirectory;
+                entry = "index.htm";
+            }
+        }
 
         root = Path.GetFullPath(root);
         if (!Directory.Exists(root))
@@ -751,18 +765,21 @@ internal static class MimeTypes
 
 internal static class ContextMenuInstaller
 {
+    private const string AppKeyName = "Jupiter.exe";
+    private const string HtmlProgId = "Jupiter.html";
+    private const string AppCapabilitiesPath = @"Software\Jupiter\Capabilities";
     private static readonly string ExePath = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "Jupiter.exe");
+    private static readonly string IconPath = $"\"{ExePath}\",0";
+    private static readonly string RunFileCommand = $"\"{ExePath}\" \"%1\"";
 
     public static void Install()
     {
         Uninstall();
-        SetCommand(@"Software\Classes\Directory\shell\Jupiter", "Open with Jupiter", $"\"{ExePath}\" \"%1\"");
+        RegisterOpenWith();
+        SetCommand(@"Software\Classes\Directory\shell\Jupiter", "Open with Jupiter", RunFileCommand);
         SetCommand(@"Software\Classes\Directory\Background\shell\Jupiter", "Open folder with Jupiter", $"\"{ExePath}\" \"%V\"");
-        SetCommand(@"Software\Classes\htmlfile\shell\Jupiter", "Run with Jupiter", $"\"{ExePath}\" \"%1\"");
-        SetCommand(@"Software\Classes\SystemFileAssociations\.html\shell\Jupiter", "Run with Jupiter", $"\"{ExePath}\" \"%1\"");
-        SetCommand(@"Software\Classes\SystemFileAssociations\.htm\shell\Jupiter", "Run with Jupiter", $"\"{ExePath}\" \"%1\"");
-        SetCommand(@"Software\Classes\.html\shell\Jupiter", "Run with Jupiter", $"\"{ExePath}\" \"%1\"");
-        SetCommand(@"Software\Classes\.htm\shell\Jupiter", "Run with Jupiter", $"\"{ExePath}\" \"%1\"");
+        SetCommand(@"Software\Classes\SystemFileAssociations\.html\shell\Jupiter", "Run with Jupiter", RunFileCommand);
+        SetCommand(@"Software\Classes\SystemFileAssociations\.htm\shell\Jupiter", "Run with Jupiter", RunFileCommand);
         RefreshExplorer();
     }
 
@@ -771,16 +788,109 @@ internal static class ContextMenuInstaller
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\Directory\shell\WebPlay", false);
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\Directory\Background\shell\WebPlay", false);
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\htmlfile\shell\WebPlay", false);
+        Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\SystemFileAssociations\.html\shell\WebPlay", false);
+        Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\SystemFileAssociations\.htm\shell\WebPlay", false);
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\.html\shell\WebPlay", false);
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\.htm\shell\WebPlay", false);
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\Directory\shell\Jupiter", false);
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\Directory\Background\shell\Jupiter", false);
+        Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\*\shell\Jupiter", false);
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\htmlfile\shell\Jupiter", false);
+        Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\MSEdgeHTM\shell\Jupiter", false);
+        Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\ChromeHTML\shell\Jupiter", false);
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\SystemFileAssociations\.html\shell\Jupiter", false);
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\SystemFileAssociations\.htm\shell\Jupiter", false);
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\.html\shell\Jupiter", false);
         Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\.htm\shell\Jupiter", false);
+        DeleteBrowserProgIdVerbs();
+        Registry.CurrentUser.DeleteSubKeyTree($@"Software\Classes\Applications\{AppKeyName}", false);
+        Registry.CurrentUser.DeleteSubKeyTree($@"Software\Classes\{HtmlProgId}", false);
+        Registry.CurrentUser.DeleteSubKeyTree(@"Software\Jupiter", false);
+        DeleteValue(@"Software\RegisteredApplications", AppInfo.DisplayName);
+        DeleteValue(@"Software\Classes\.html\OpenWithProgids", HtmlProgId);
+        DeleteValue(@"Software\Classes\.htm\OpenWithProgids", HtmlProgId);
+        DeleteValue(@"Software\Classes\.html\OpenWithList", AppKeyName);
+        DeleteValue(@"Software\Classes\.htm\OpenWithList", AppKeyName);
+        DeleteValue(@"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.html\OpenWithProgids", HtmlProgId);
+        DeleteValue(@"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.htm\OpenWithProgids", HtmlProgId);
+        DeleteOpenWithListEntry(@".html", AppKeyName);
+        DeleteOpenWithListEntry(@".htm", AppKeyName);
         RefreshExplorer();
+    }
+
+    private static void RegisterOpenWith()
+    {
+        SetApplicationCommand($@"Software\Classes\Applications\{AppKeyName}");
+        SetProgId($@"Software\Classes\{HtmlProgId}");
+        AddOpenWith(@".html");
+        AddOpenWith(@".htm");
+        RegisterCapabilities();
+    }
+
+    private static void DeleteBrowserProgIdVerbs()
+    {
+        Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\FirefoxHTML\shell\Jupiter", false);
+
+        using var machineClasses = Registry.LocalMachine.OpenSubKey(@"Software\Classes");
+        if (machineClasses is null)
+        {
+            return;
+        }
+
+        foreach (var name in machineClasses.GetSubKeyNames().Where(name => name.StartsWith("FirefoxHTML-", StringComparison.OrdinalIgnoreCase)))
+        {
+            Registry.CurrentUser.DeleteSubKeyTree($@"Software\Classes\{name}\shell\Jupiter", false);
+        }
+    }
+
+    private static void SetApplicationCommand(string keyPath)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(keyPath);
+        key.SetValue("FriendlyAppName", AppInfo.DisplayName);
+        key.SetValue("ApplicationName", AppInfo.DisplayName);
+        key.SetValue("ApplicationDescription", "Run local HTML games with Jupiter.");
+        key.SetValue("ApplicationIcon", IconPath);
+
+        using var supportedTypes = key.CreateSubKey("SupportedTypes");
+        supportedTypes.SetValue(".html", "");
+        supportedTypes.SetValue(".htm", "");
+
+        SetCommand($@"{keyPath}\shell\open", "Run with Jupiter", RunFileCommand);
+    }
+
+    private static void SetProgId(string keyPath)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(keyPath);
+        key.SetValue("", "Jupiter HTML Game");
+
+        using var defaultIcon = key.CreateSubKey("DefaultIcon");
+        defaultIcon.SetValue("", IconPath);
+
+        SetCommand($@"{keyPath}\shell\open", "Run with Jupiter", RunFileCommand);
+    }
+
+    private static void AddOpenWith(string extension)
+    {
+        using var classesProgIds = Registry.CurrentUser.CreateSubKey($@"Software\Classes\{extension}\OpenWithProgids");
+        classesProgIds.SetValue(HtmlProgId, Array.Empty<byte>(), RegistryValueKind.None);
+
+        using var explorerProgIds = Registry.CurrentUser.CreateSubKey($@"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{extension}\OpenWithProgids");
+        explorerProgIds.SetValue(HtmlProgId, Array.Empty<byte>(), RegistryValueKind.None);
+    }
+
+    private static void RegisterCapabilities()
+    {
+        using var capabilities = Registry.CurrentUser.CreateSubKey(AppCapabilitiesPath);
+        capabilities.SetValue("ApplicationName", AppInfo.DisplayName);
+        capabilities.SetValue("ApplicationDescription", "Run local HTML games with Jupiter.");
+        capabilities.SetValue("ApplicationIcon", IconPath);
+
+        using var fileAssociations = capabilities.CreateSubKey("FileAssociations");
+        fileAssociations.SetValue(".html", HtmlProgId);
+        fileAssociations.SetValue(".htm", HtmlProgId);
+
+        using var registeredApplications = Registry.CurrentUser.CreateSubKey(@"Software\RegisteredApplications");
+        registeredApplications.SetValue(AppInfo.DisplayName, AppCapabilitiesPath);
     }
 
     private static void SetCommand(string keyPath, string label, string command)
@@ -788,11 +898,34 @@ internal static class ContextMenuInstaller
         using var key = Registry.CurrentUser.CreateSubKey(keyPath);
         key.SetValue("", label);
         key.SetValue("MUIVerb", label);
-        key.SetValue("Icon", ExePath);
+        key.SetValue("Icon", IconPath);
         key.SetValue("Position", "Top");
 
         using var commandKey = key.CreateSubKey("command");
         commandKey.SetValue("", command);
+    }
+
+    private static void DeleteValue(string keyPath, string valueName)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(keyPath, writable: true);
+        key?.DeleteValue(valueName, false);
+    }
+
+    private static void DeleteOpenWithListEntry(string extension, string appName)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey($@"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\{extension}\OpenWithList", writable: true);
+        if (key is null)
+        {
+            return;
+        }
+
+        foreach (var valueName in key.GetValueNames())
+        {
+            if (key.GetValue(valueName) is string value && value.Equals(appName, StringComparison.OrdinalIgnoreCase))
+            {
+                key.DeleteValue(valueName, false);
+            }
+        }
     }
 
     private static void RefreshExplorer()
